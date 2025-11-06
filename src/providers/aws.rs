@@ -1,13 +1,11 @@
 //! Amazon Web Services (AWS).
 
 use std::path::Path;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::sync::mpsc::Sender;
-use tracing::{debug, error, info, instrument};
 
 use crate::{Provider, ProviderId};
 
@@ -35,23 +33,18 @@ impl Provider for Aws {
     }
 
     /// Tries to identify AWS using all the implemented options.
-    #[instrument(skip_all)]
-    async fn identify(&self, tx: Sender<ProviderId>, timeout: Duration) {
-        info!("Checking Amazon Web Services");
+    async fn identify(&self, tx: Sender<ProviderId>) {
+        tracing::trace!("Checking Amazon Web Services");
         if self.check_product_version_file(PRODUCT_VERSION_FILE).await
             || self.check_bios_vendor_file(BIOS_VENDOR_FILE).await
-            || self
-                .check_metadata_server_imdsv2(METADATA_URI, timeout)
-                .await
-            || self
-                .check_metadata_server_imdsv1(METADATA_URI, timeout)
-                .await
+            || self.check_metadata_server_imdsv2(METADATA_URI).await
+            || self.check_metadata_server_imdsv1(METADATA_URI).await
         {
-            info!("Identified Amazon Web Services");
+            tracing::trace!("Identified Amazon Web Services");
             let res = tx.send(IDENTIFIER).await;
 
             if let Err(err) = res {
-                error!("Error sending message: {:?}", err);
+                tracing::trace!("Error sending message: {:?}", err);
             }
         }
     }
@@ -59,15 +52,15 @@ impl Provider for Aws {
 
 impl Aws {
     /// Tries to identify AWS via metadata server (using IMDSv2).
-    #[instrument(skip_all)]
-    async fn check_metadata_server_imdsv2(&self, metadata_uri: &str, timeout: Duration) -> bool {
+    async fn check_metadata_server_imdsv2(&self, metadata_uri: &str) -> bool {
+        let timeout = crate::DEFAULT_DETECTION_TIMEOUT;
         let token_url = format!("{metadata_uri}{METADATA_TOKEN_PATH}");
-        debug!("Retrieving {} IMDSv2 token from: {}", IDENTIFIER, token_url);
+        tracing::trace!("Retrieving {} IMDSv2 token from: {}", IDENTIFIER, token_url);
 
         let client = if let Ok(client) = reqwest::Client::builder().timeout(timeout).build() {
             client
         } else {
-            error!("Error creating client");
+            tracing::trace!("Error creating client");
             return false;
         };
 
@@ -78,25 +71,26 @@ impl Aws {
             .await
         {
             Ok(resp) => resp.text().await.unwrap_or_else(|err| {
-                error!("Error reading token: {:?}", err);
+                tracing::trace!("Error reading token: {:?}", err);
                 String::new()
             }),
             Err(err) => {
-                error!("Error making request: {:?}", err);
+                tracing::trace!("Error making request: {:?}", err);
                 return false;
             }
         };
 
         if token.is_empty() {
-            error!("IMDSv2 token is empty");
+            tracing::trace!("IMDSv2 token is empty");
             return false;
         }
 
         // Request to use the token to get metadata
         let metadata_url = format!("{metadata_uri}{METADATA_PATH}");
-        debug!(
+        tracing::trace!(
             "Checking {} metadata using url: {}",
-            IDENTIFIER, metadata_url
+            IDENTIFIER,
+            metadata_url
         );
 
         let resp = match client
@@ -107,7 +101,7 @@ impl Aws {
         {
             Ok(resp) => resp.json::<MetadataResponse>().await,
             Err(err) => {
-                error!("Error making request: {:?}", err);
+                tracing::trace!("Error making request: {:?}", err);
                 return false;
             }
         };
@@ -117,22 +111,22 @@ impl Aws {
                 metadata.image_id.starts_with("ami-") && metadata.instance_id.starts_with("i-")
             }
             Err(err) => {
-                error!("Error reading response: {:?}", err);
+                tracing::trace!("Error reading response: {:?}", err);
                 false
             }
         }
     }
 
     /// Tries to identify AWS via metadata server (using IMDSv1).
-    #[instrument(skip_all)]
-    async fn check_metadata_server_imdsv1(&self, metadata_uri: &str, timeout: Duration) -> bool {
+    async fn check_metadata_server_imdsv1(&self, metadata_uri: &str) -> bool {
+        let timeout = crate::DEFAULT_DETECTION_TIMEOUT;
         let url = format!("{metadata_uri}{METADATA_PATH}");
-        debug!("Checking {} metadata using url: {}", IDENTIFIER, url);
+        tracing::trace!("Checking {} metadata using url: {}", IDENTIFIER, url);
 
         let client = if let Ok(client) = reqwest::Client::builder().timeout(timeout).build() {
             client
         } else {
-            error!("Error creating client");
+            tracing::trace!("Error creating client");
             return false;
         };
 
@@ -140,21 +134,20 @@ impl Aws {
             Ok(resp) => match resp.json::<MetadataResponse>().await {
                 Ok(resp) => resp.image_id.starts_with("ami-") && resp.instance_id.starts_with("i-"),
                 Err(err) => {
-                    error!("Error reading response: {:?}", err);
+                    tracing::trace!("Error reading response: {:?}", err);
                     false
                 }
             },
             Err(err) => {
-                error!("Error making request: {:?}", err);
+                tracing::trace!("Error making request: {:?}", err);
                 false
             }
         }
     }
 
     /// Tries to identify AWS using the product version file.
-    #[instrument(skip_all)]
     async fn check_product_version_file<P: AsRef<Path>>(&self, product_version_file: P) -> bool {
-        debug!(
+        tracing::trace!(
             "Checking {} product version file: {}",
             IDENTIFIER,
             product_version_file.as_ref().display()
@@ -164,7 +157,7 @@ impl Aws {
             return match fs::read_to_string(product_version_file).await {
                 Ok(content) => content.to_lowercase().contains("amazon"),
                 Err(err) => {
-                    error!("Error reading file: {:?}", err);
+                    tracing::trace!("Error reading file: {:?}", err);
                     false
                 }
             };
@@ -174,9 +167,8 @@ impl Aws {
     }
 
     /// Tries to identify AWS using the BIOS vendor file.
-    #[instrument(skip_all)]
     async fn check_bios_vendor_file<P: AsRef<Path>>(&self, bios_vendor_file: P) -> bool {
-        debug!(
+        tracing::trace!(
             "Checking {} BIOS vendor file: {}",
             IDENTIFIER,
             bios_vendor_file.as_ref().display()
@@ -186,7 +178,7 @@ impl Aws {
             return match fs::read_to_string(bios_vendor_file).await {
                 Ok(content) => content.to_lowercase().contains("amazon"),
                 Err(err) => {
-                    error!("Error reading file: {:?}", err);
+                    tracing::trace!("Error reading file: {:?}", err);
                     false
                 }
             };
@@ -229,9 +221,7 @@ mod tests {
 
         let provider = Aws;
         let metadata_uri = mock_server.uri();
-        let result = provider
-            .check_metadata_server_imdsv2(&metadata_uri, Duration::from_secs(1))
-            .await;
+        let result = provider.check_metadata_server_imdsv2(&metadata_uri).await;
 
         assert!(result);
     }
@@ -257,9 +247,7 @@ mod tests {
 
         let provider = Aws;
         let metadata_uri = mock_server.uri();
-        let result = provider
-            .check_metadata_server_imdsv2(&metadata_uri, Duration::from_secs(1))
-            .await;
+        let result = provider.check_metadata_server_imdsv2(&metadata_uri).await;
 
         assert!(!result);
     }
@@ -278,9 +266,7 @@ mod tests {
 
         let provider = Aws;
         let metadata_uri = mock_server.uri();
-        let result = provider
-            .check_metadata_server_imdsv1(&metadata_uri, Duration::from_secs(1))
-            .await;
+        let result = provider.check_metadata_server_imdsv1(&metadata_uri).await;
 
         assert!(result);
     }
@@ -299,9 +285,7 @@ mod tests {
 
         let provider = Aws;
         let metadata_uri = mock_server.uri();
-        let result = provider
-            .check_metadata_server_imdsv1(&metadata_uri, Duration::from_secs(1))
-            .await;
+        let result = provider.check_metadata_server_imdsv1(&metadata_uri).await;
 
         assert!(!result);
     }

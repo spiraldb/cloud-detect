@@ -69,15 +69,42 @@ type P = Arc<dyn Provider>;
 
 static PROVIDERS: LazyLock<Mutex<Vec<P>>> = LazyLock::new(|| {
     Mutex::new(vec![
-        Arc::new(akamai::Akamai) as P,
-        Arc::new(alibaba::Alibaba) as P,
-        Arc::new(aws::Aws) as P,
-        Arc::new(azure::Azure) as P,
-        Arc::new(digitalocean::DigitalOcean) as P,
-        Arc::new(gcp::Gcp) as P,
-        Arc::new(oci::Oci) as P,
-        Arc::new(openstack::OpenStack) as P,
-        Arc::new(vultr::Vultr) as P,
+        #[cfg(feature = "akami")]
+        {
+            Arc::new(akamai::Akamai) as P
+        },
+        #[cfg(feature = "alibaba")]
+        {
+            Arc::new(alibaba::Alibaba) as P
+        },
+        #[cfg(feature = "aws")]
+        {
+            Arc::new(aws::Aws) as P
+        },
+        #[cfg(feature = "azure")]
+        {
+            Arc::new(azure::Azure) as P
+        },
+        #[cfg(feature = "digitalocean")]
+        {
+            Arc::new(digitalocean::DigitalOcean) as P
+        },
+        #[cfg(feature = "gcp")]
+        {
+            Arc::new(gcp::Gcp) as P
+        },
+        #[cfg(feature = "oci")]
+        {
+            Arc::new(oci::Oci) as P
+        },
+        #[cfg(feature = "openstack")]
+        {
+            Arc::new(openstack::OpenStack) as P
+        },
+        #[cfg(feature = "vultr")]
+        {
+            Arc::new(vultr::Vultr) as P
+        },
     ])
 });
 

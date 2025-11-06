@@ -1,11 +1,8 @@
 //! Akamai Cloud
 
-use std::time::Duration;
-
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
-use tracing::{debug, error, info, instrument};
 
 use crate::{Provider, ProviderId};
 
@@ -29,30 +26,29 @@ impl Provider for Akamai {
     }
 
     /// Tries to identify Akamai using all the implemented options.
-    #[instrument(skip_all)]
-    async fn identify(&self, tx: Sender<ProviderId>, timeout: Duration) {
-        info!("Checking Akamai Cloud");
-        if self.check_metadata_server(METADATA_URI, timeout).await {
-            info!("Identified Akamai Cloud");
+    async fn identify(&self, tx: Sender<ProviderId>) {
+        tracing::trace!("Checking Akamai Cloud");
+        if self.check_metadata_server(METADATA_URI).await {
+            tracing::trace!("Identified Akamai Cloud");
             let res = tx.send(IDENTIFIER).await;
 
             if let Err(err) = res {
-                error!("Error sending message: {:?}", err);
+                tracing::trace!("Error sending message: {:?}", err);
             }
         }
     }
 }
 
 impl Akamai {
-    #[instrument(skip_all)]
-    async fn check_metadata_server(&self, metadata_uri: &str, timeout: Duration) -> bool {
+    async fn check_metadata_server(&self, metadata_uri: &str) -> bool {
+        let timeout = crate::DEFAULT_DETECTION_TIMEOUT;
         let token_url = format!("{metadata_uri}{METADATA_TOKEN_PATH}");
-        debug!("Retrieving {} token from: {}", IDENTIFIER, token_url);
+        tracing::trace!("Retrieving {} token from: {}", IDENTIFIER, token_url);
 
         let client = if let Ok(client) = reqwest::Client::builder().timeout(timeout).build() {
             client
         } else {
-            error!("Error creating client");
+            tracing::trace!("Error creating client");
             return false;
         };
 
@@ -63,25 +59,26 @@ impl Akamai {
             .await
         {
             Ok(resp) => resp.text().await.unwrap_or_else(|err| {
-                error!("Error reading token: {:?}", err);
+                tracing::trace!("Error reading token: {:?}", err);
                 String::new()
             }),
             Err(err) => {
-                error!("Error making request: {:?}", err);
+                tracing::trace!("Error making request: {:?}", err);
                 return false;
             }
         };
 
         if token.is_empty() {
-            error!("Token is empty");
+            tracing::trace!("Token is empty");
             return false;
         }
 
         // Request to use token to get metadata
         let metadata_url = format!("{metadata_uri}{METADATA_PATH}");
-        debug!(
+        tracing::trace!(
             "Checking {} metadata using url: {}",
-            IDENTIFIER, metadata_url,
+            IDENTIFIER,
+            metadata_url,
         );
 
         let resp = match client
@@ -92,7 +89,7 @@ impl Akamai {
         {
             Ok(resp) => resp.json::<MetadataResponse>().await,
             Err(err) => {
-                error!("Error making request: {:?}", err);
+                tracing::trace!("Error making request: {:?}", err);
                 return false;
             }
         };
@@ -100,7 +97,7 @@ impl Akamai {
         match resp {
             Ok(metadata) => metadata.id > 0 && !metadata.host_uuid.is_empty(),
             Err(err) => {
-                error!("Error reading response: {:?}", err);
+                tracing::trace!("Error reading response: {:?}", err);
                 false
             }
         }
@@ -136,9 +133,7 @@ mod tests {
 
         let provider = Akamai;
         let metadata_uri = mock_server.uri();
-        let result = provider
-            .check_metadata_server(&metadata_uri, Duration::from_secs(1))
-            .await;
+        let result = provider.check_metadata_server(&metadata_uri).await;
 
         assert!(result);
     }
@@ -164,9 +159,7 @@ mod tests {
 
         let provider = Akamai;
         let metadata_uri = mock_server.uri();
-        let result = provider
-            .check_metadata_server(&metadata_uri, Duration::from_secs(1))
-            .await;
+        let result = provider.check_metadata_server(&metadata_uri).await;
 
         assert!(!result);
     }

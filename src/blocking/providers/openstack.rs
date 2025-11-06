@@ -6,7 +6,6 @@ use std::sync::mpsc::SyncSender;
 use std::time::Duration;
 
 use reqwest::blocking::Client;
-use tracing::{debug, error, info, instrument};
 
 use crate::blocking::Provider;
 use crate::ProviderId;
@@ -33,15 +32,14 @@ impl Provider for OpenStack {
     }
 
     /// Tries to identify OpenStack using all the implemented options.
-    #[instrument(skip_all)]
     fn identify(&self, tx: SyncSender<ProviderId>, timeout: Duration) {
-        info!("Checking OpenStack");
+        tracing::trace!("Checking OpenStack");
         if self.check_vendor_files(PRODUCT_NAME_FILE, CHASSIS_ASSET_TAG_FILE)
             || self.check_metadata_server(METADATA_URI, timeout)
         {
-            info!("Identified OpenStack");
+            tracing::trace!("Identified OpenStack");
             if let Err(err) = tx.send(IDENTIFIER) {
-                error!("Error sending message: {:?}", err);
+                tracing::trace!("Error sending message: {:?}", err);
             }
         }
     }
@@ -49,35 +47,33 @@ impl Provider for OpenStack {
 
 impl OpenStack {
     /// Tries to identify OpenStack via metadata server.
-    #[instrument(skip_all)]
     fn check_metadata_server(&self, metadata_uri: &str, timeout: Duration) -> bool {
         let url = format!("{metadata_uri}{METADATA_PATH}");
-        debug!("Checking {} metadata using url: {}", IDENTIFIER, url);
+        tracing::trace!("Checking {} metadata using url: {}", IDENTIFIER, url);
 
         let client = if let Ok(client) = Client::builder().timeout(timeout).build() {
             client
         } else {
-            error!("Error creating client");
+            tracing::trace!("Error creating client");
             return false;
         };
 
         match client.get(url).send() {
             Ok(resp) => resp.status().is_success(),
             Err(err) => {
-                error!("Error making request: {:?}", err);
+                tracing::trace!("Error making request: {:?}", err);
                 false
             }
         }
     }
 
     /// Tries to identify OpenStack using vendor file(s).
-    #[instrument(skip_all)]
     fn check_vendor_files<P: AsRef<Path>>(
         &self,
         product_name_file: P,
         chassis_asset_tag_file: P,
     ) -> bool {
-        debug!(
+        tracing::trace!(
             "Checking {} vendor file: {}",
             IDENTIFIER,
             product_name_file.as_ref().display(),
@@ -91,12 +87,12 @@ impl OpenStack {
                     }
                 }
                 Err(err) => {
-                    error!("Error reading file: {:?}", err);
+                    tracing::trace!("Error reading file: {:?}", err);
                 }
             };
         }
 
-        debug!(
+        tracing::trace!(
             "Checking {} vendor file: {}",
             IDENTIFIER,
             chassis_asset_tag_file.as_ref().display(),
@@ -110,7 +106,7 @@ impl OpenStack {
                     }
                 }
                 Err(err) => {
-                    error!("Error reading file: {:?}", err);
+                    tracing::trace!("Error reading file: {:?}", err);
                 }
             };
         }

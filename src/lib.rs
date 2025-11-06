@@ -55,7 +55,7 @@ use async_trait::async_trait;
 use strum::Display;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex, Notify};
-use tracing::{debug, instrument};
+use tokio::task::JoinSet;
 
 use crate::providers::*;
 
@@ -107,22 +107,49 @@ pub enum ProviderId {
 #[async_trait]
 pub(crate) trait Provider: Send + Sync {
     fn identifier(&self) -> ProviderId;
-    async fn identify(&self, tx: Sender<ProviderId>, timeout: Duration);
+    async fn identify(&self, tx: Sender<ProviderId>);
 }
 
 type P = Arc<dyn Provider>;
 
 static PROVIDERS: LazyLock<Mutex<Vec<P>>> = LazyLock::new(|| {
     Mutex::new(vec![
-        Arc::new(akamai::Akamai) as P,
-        Arc::new(alibaba::Alibaba) as P,
-        Arc::new(aws::Aws) as P,
-        Arc::new(azure::Azure) as P,
-        Arc::new(digitalocean::DigitalOcean) as P,
-        Arc::new(gcp::Gcp) as P,
-        Arc::new(oci::Oci) as P,
-        Arc::new(openstack::OpenStack) as P,
-        Arc::new(vultr::Vultr) as P,
+        #[cfg(feature = "akami")]
+        {
+            Arc::new(akamai::Akamai) as P
+        },
+        #[cfg(feature = "alibaba")]
+        {
+            Arc::new(alibaba::Alibaba) as P
+        },
+        #[cfg(feature = "aws")]
+        {
+            Arc::new(aws::Aws) as P
+        },
+        #[cfg(feature = "azure")]
+        {
+            Arc::new(azure::Azure) as P
+        },
+        #[cfg(feature = "digitalocean")]
+        {
+            Arc::new(digitalocean::DigitalOcean) as P
+        },
+        #[cfg(feature = "gcp")]
+        {
+            Arc::new(gcp::Gcp) as P
+        },
+        #[cfg(feature = "oci")]
+        {
+            Arc::new(oci::Oci) as P
+        },
+        #[cfg(feature = "openstack")]
+        {
+            Arc::new(openstack::OpenStack) as P
+        },
+        #[cfg(feature = "vultr")]
+        {
+            Arc::new(vultr::Vultr) as P
+        },
     ])
 });
 
@@ -150,45 +177,14 @@ pub async fn supported_providers() -> Vec<String> {
     providers
 }
 
+/// Detects the host's cloud provider with a timeout, return `None` if all operations timed out.
+pub async fn detect_with_timeout(duration: Duration) -> Option<ProviderId> {
+    tokio::time::timeout(duration, detect()).await.ok()
+}
+
 /// Detects the host's cloud provider.
-///
-/// Returns [ProviderId::Unknown] if the detection failed or timed out. If the detection was successful, it returns
-/// a value from [ProviderId](enum.ProviderId.html).
-///
-/// # Arguments
-///
-/// * `timeout` - Maximum time (seconds) allowed for detection. Defaults to [DEFAULT_DETECTION_TIMEOUT](constant.DEFAULT_DETECTION_TIMEOUT.html) if `None`.
-///
-/// # Examples
-///
-/// Detect the cloud provider and print the result (with default timeout).
-///
 /// ```
-/// use cloud_detect::detect;
-///
-/// #[tokio::main]
-/// async fn main() {
-///     let provider = detect(None).await;
-///     println!("Detected provider: {}", provider);
-/// }
-/// ```
-///
-/// Detect the cloud provider and print the result (with custom timeout).
-///
-/// ```
-/// use std::time::Duration;
-///
-/// use cloud_detect::detect;
-///
-/// #[tokio::main]
-/// async fn main() {
-///     let provider = detect(Some(Duration::from_secs(10))).await;
-///     println!("Detected provider: {}", provider);
-/// }
-/// ```
-#[instrument]
-pub async fn detect(timeout: Option<Duration>) -> ProviderId {
-    let timeout = timeout.unwrap_or(DEFAULT_DETECTION_TIMEOUT);
+pub async fn detect() -> ProviderId {
     let (tx, mut rx) = mpsc::channel::<ProviderId>(1);
     let guard = PROVIDERS.lock().await;
     let provider_entries: Vec<P> = guard.iter().cloned().collect();
@@ -199,14 +195,15 @@ pub async fn detect(timeout: Option<Duration>) -> ProviderId {
     let counter = Arc::new(AtomicUsize::new(providers_count));
     let complete = Arc::new(Notify::new());
 
+    let mut join_set = JoinSet::new();
+
     for provider in provider_entries {
         let tx = tx.clone();
         let counter = counter.clone();
         let complete = complete.clone();
 
-        handles.push(tokio::spawn(async move {
-            debug!("Spawning task for provider: {}", provider.identifier());
-            provider.identify(tx, timeout).await;
+        handles.push(join_set.spawn(async move {
+            provider.identify(tx).await;
 
             // Decrement counter and notify if we're the last task
             if counter.fetch_sub(1, Ordering::SeqCst) == 1 {
@@ -220,20 +217,14 @@ pub async fn detect(timeout: Option<Duration>) -> ProviderId {
 
         // Priority 1: If we receive an identifier, return it immediately
         res = rx.recv() => {
-            debug!("Received result from channel: {:?}", res);
+            tracing::trace!("Received result from channel: {:?}", res);
             res.unwrap_or_default()
         }
 
         // Priority 2: If all tasks complete without finding an identifier
         _ = complete.notified() => {
-            debug!("All providers have finished identifying");
-            Default::default()
-        }
-
-        // Priority 3: If we time out
-        _ = tokio::time::sleep(timeout) => {
-            debug!("Detection timed out");
-            Default::default()
+            tracing::trace!("All providers have finished identifying");
+            ProviderId::Unknown
         }
     }
 }

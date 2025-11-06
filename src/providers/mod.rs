@@ -1,11 +1,20 @@
 //! Provider modules.
 
+#[cfg(feature = "akami")]
 pub(crate) mod akamai;
+#[cfg(feature = "alibaba")]
 pub(crate) mod alibaba;
+#[cfg(feature = "aws")]
 pub(crate) mod aws;
+#[cfg(feature = "azure")]
 pub(crate) mod azure;
+#[cfg(feature = "digitalocean")]
 pub(crate) mod digitalocean;
+#[cfg(feature = "gcp")]
 pub(crate) mod gcp;
+#[cfg(feature = "oci")]
 pub(crate) mod oci;
+#[cfg(feature = "openstack")]
 pub(crate) mod openstack;
+#[cfg(feature = "vultr")]
 pub(crate) mod vultr;

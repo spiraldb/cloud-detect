@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, instrument};
 
 use crate::blocking::Provider;
 use crate::ProviderId;
@@ -30,28 +29,27 @@ impl Provider for Akamai {
 
     /// Tries to identify Akamai using all the implemented options.
     fn identify(&self, tx: SyncSender<ProviderId>, timeout: Duration) {
-        info!("Checking Akamai Cloud");
+        tracing::trace!("Checking Akamai Cloud");
         if self.check_metadata_server(METADATA_URI, timeout) {
-            info!("Identified Akamai Cloud");
+            tracing::trace!("Identified Akamai Cloud");
             let res = tx.send(IDENTIFIER);
 
             if let Err(err) = res {
-                error!("Error sending message: {:?}", err);
+                tracing::trace!("Error sending message: {:?}", err);
             }
         }
     }
 }
 
 impl Akamai {
-    #[instrument(skip_all)]
     fn check_metadata_server(&self, metadata_uri: &str, timeout: Duration) -> bool {
         let token_url = format!("{metadata_uri}{METADATA_TOKEN_PATH}");
-        debug!("Retrieving {} token from: {}", IDENTIFIER, token_url);
+        tracing::trace!("Retrieving {} token from: {}", IDENTIFIER, token_url);
 
         let client = if let Ok(client) = Client::builder().timeout(timeout).build() {
             client
         } else {
-            error!("Error creating client");
+            tracing::trace!("Error creating client");
             return false;
         };
 
@@ -61,25 +59,26 @@ impl Akamai {
             .send()
         {
             Ok(resp) => resp.text().unwrap_or_else(|err| {
-                error!("Error reading token: {:?}", err);
+                tracing::trace!("Error reading token: {:?}", err);
                 String::new()
             }),
             Err(err) => {
-                error!("Error making request: {:?}", err);
+                tracing::trace!("Error making request: {:?}", err);
                 return false;
             }
         };
 
         if token.is_empty() {
-            error!("Token is empty");
+            tracing::trace!("Token is empty");
             return false;
         }
 
         // Request to use token to get metadata
         let metadata_url = format!("{metadata_uri}{METADATA_PATH}");
-        debug!(
+        tracing::trace!(
             "Checking {} metadata using url: {}",
-            IDENTIFIER, metadata_url,
+            IDENTIFIER,
+            metadata_url,
         );
 
         let resp = match client
@@ -89,7 +88,7 @@ impl Akamai {
         {
             Ok(resp) => resp.json::<MetadataResponse>(),
             Err(err) => {
-                error!("Error making request: {:?}", err);
+                tracing::trace!("Error making request: {:?}", err);
                 return false;
             }
         };
@@ -97,7 +96,7 @@ impl Akamai {
         match resp {
             Ok(metadata) => metadata.id > 0 && !metadata.host_uuid.is_empty(),
             Err(err) => {
-                error!("Error reading response: {:?}", err);
+                tracing::trace!("Error reading response: {:?}", err);
                 false
             }
         }

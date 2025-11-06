@@ -1,12 +1,10 @@
 //! OpenStack.
 
 use std::path::Path;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::fs;
 use tokio::sync::mpsc::Sender;
-use tracing::{debug, error, info, instrument};
 
 use crate::{Provider, ProviderId};
 
@@ -33,19 +31,18 @@ impl Provider for OpenStack {
     }
 
     /// Tries to identify OpenStack using all the implemented options.
-    #[instrument(skip_all)]
-    async fn identify(&self, tx: Sender<ProviderId>, timeout: Duration) {
-        info!("Checking OpenStack");
+    async fn identify(&self, tx: Sender<ProviderId>) {
+        tracing::trace!("Checking OpenStack");
         if self
             .check_vendor_files(PRODUCT_NAME_FILE, CHASSIS_ASSET_TAG_FILE)
             .await
-            || self.check_metadata_server(METADATA_URI, timeout).await
+            || self.check_metadata_server(METADATA_URI).await
         {
-            info!("Identified OpenStack");
+            tracing::trace!("Identified OpenStack");
             let res = tx.send(IDENTIFIER).await;
 
             if let Err(err) = res {
-                error!("Error sending message: {:?}", err);
+                tracing::trace!("Error sending message: {:?}", err);
             }
         }
     }
@@ -53,35 +50,34 @@ impl Provider for OpenStack {
 
 impl OpenStack {
     /// Tries to identify OpenStack via metadata server.
-    #[instrument(skip_all)]
-    async fn check_metadata_server(&self, metadata_uri: &str, timeout: Duration) -> bool {
+    async fn check_metadata_server(&self, metadata_uri: &str) -> bool {
+        let timeout = crate::DEFAULT_DETECTION_TIMEOUT;
         let url = format!("{metadata_uri}{METADATA_PATH}");
-        debug!("Checking {} metadata using url: {}", IDENTIFIER, url);
+        tracing::trace!("Checking {} metadata using url: {}", IDENTIFIER, url);
 
         let client = if let Ok(client) = reqwest::Client::builder().timeout(timeout).build() {
             client
         } else {
-            error!("Error creating client");
+            tracing::trace!("Error creating client");
             return false;
         };
 
         match client.get(url).send().await {
             Ok(resp) => resp.status().is_success(),
             Err(err) => {
-                error!("Error making request: {:?}", err);
+                tracing::trace!("Error making request: {:?}", err);
                 false
             }
         }
     }
 
     /// Tries to identify OpenStack using vendor file(s).
-    #[instrument(skip_all)]
     async fn check_vendor_files<P: AsRef<Path>>(
         &self,
         product_name_file: P,
         chassis_asset_tag_file: P,
     ) -> bool {
-        debug!(
+        tracing::trace!(
             "Checking {} vendor file: {}",
             IDENTIFIER,
             product_name_file.as_ref().display()
@@ -95,12 +91,12 @@ impl OpenStack {
                     }
                 }
                 Err(err) => {
-                    error!("Error reading file: {:?}", err);
+                    tracing::trace!("Error reading file: {:?}", err);
                 }
             }
         }
 
-        debug!(
+        tracing::trace!(
             "Checking {} vendor file: {}",
             IDENTIFIER,
             chassis_asset_tag_file.as_ref().display(),
@@ -117,7 +113,7 @@ impl OpenStack {
                     }
                 }
                 Err(err) => {
-                    error!("Error reading file: {:?}", err);
+                    tracing::trace!("Error reading file: {:?}", err);
                 }
             }
         }
@@ -148,9 +144,7 @@ mod tests {
 
         let provider = OpenStack;
         let metadata_uri = mock_server.uri();
-        let result = provider
-            .check_metadata_server(&metadata_uri, Duration::from_secs(1))
-            .await;
+        let result = provider.check_metadata_server(&metadata_uri).await;
 
         assert!(result);
     }
@@ -166,9 +160,7 @@ mod tests {
 
         let provider = OpenStack;
         let metadata_uri = mock_server.uri();
-        let result = provider
-            .check_metadata_server(&metadata_uri, Duration::from_secs(1))
-            .await;
+        let result = provider.check_metadata_server(&metadata_uri).await;
 
         assert!(!result);
     }
