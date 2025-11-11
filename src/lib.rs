@@ -54,7 +54,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use strum::Display;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::{mpsc, Mutex, Notify};
+use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinSet;
 
 use crate::providers::*;
@@ -112,8 +112,8 @@ pub(crate) trait Provider: Send + Sync {
 
 type P = Arc<dyn Provider>;
 
-static PROVIDERS: LazyLock<Mutex<Vec<P>>> = LazyLock::new(|| {
-    Mutex::new(vec![
+static PROVIDERS: LazyLock<Vec<P>> = LazyLock::new(|| {
+    vec![
         #[cfg(feature = "akami")]
         {
             Arc::new(akamai::Akamai) as P
@@ -150,7 +150,7 @@ static PROVIDERS: LazyLock<Mutex<Vec<P>>> = LazyLock::new(|| {
         {
             Arc::new(vultr::Vultr) as P
         },
-    ])
+    ]
 });
 
 /// Returns a list of currently supported providers.
@@ -169,10 +169,10 @@ static PROVIDERS: LazyLock<Mutex<Vec<P>>> = LazyLock::new(|| {
 /// }
 /// ```
 pub async fn supported_providers() -> Vec<String> {
-    let guard = PROVIDERS.lock().await;
-    let providers: Vec<String> = guard.iter().map(|p| p.identifier().to_string()).collect();
-
-    drop(guard);
+    let providers: Vec<String> = PROVIDERS
+        .iter()
+        .map(|p| p.identifier().to_string())
+        .collect();
 
     providers
 }
@@ -186,8 +186,8 @@ pub async fn detect_with_timeout(duration: Duration) -> Option<ProviderId> {
 /// ```
 pub async fn detect() -> ProviderId {
     let (tx, mut rx) = mpsc::channel::<ProviderId>(1);
-    let guard = PROVIDERS.lock().await;
-    let provider_entries: Vec<P> = guard.iter().cloned().collect();
+
+    let provider_entries: Vec<P> = PROVIDERS.iter().cloned().collect();
     let providers_count = provider_entries.len();
     let mut handles = Vec::with_capacity(providers_count);
 
